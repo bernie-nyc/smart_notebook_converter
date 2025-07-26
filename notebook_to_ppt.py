@@ -1,12 +1,14 @@
 """
 Module to convert SMART Notebook (.notebook) files into PowerPoint (.pptx).
 
-SMART Notebook files are essentially ZIP archives containing page
-descriptions in SVG and XML.  This script extracts each SVG page,
-converts it into a raster image (PNG), and then composes a PowerPoint
-presentation by placing each image on its own slide.  It intentionally
-ignores interactive elements such as audio, video, or embedded
-activities; the goal is to produce a static slide deck.
+SMART Notebook files are essentially ZIP archives containing page
+descriptions in vector (SVG) and bitmap (PNG/JPEG) formats along with
+metadata.  This script extracts each supported page asset—SVG pages
+are converted to PNG; PNG and JPEG pages are used directly—and then
+composes a PowerPoint presentation by placing each image on its own
+slide.  Interactive elements such as audio, video, or embedded
+activities are intentionally ignored; the goal is to produce a
+static slide deck.
 
 Dependencies:
 
@@ -28,13 +30,12 @@ file with the same base name in the specified output directory.
 
 Limitations:
 
-* Only SVG pages are processed.  Some Notebook files may store
-  page content in other formats (for example, as images or in
-  proprietary XML).  Those pages will be skipped.
+* SVG, PNG and JPEG pages are processed.  Some Notebook files may
+  store page content in other proprietary formats (for example, as
+  custom XML).  Those unsupported pages will be skipped.
 * Interactive elements, audio, and video are not transferred.
 * Conversion quality depends on the SVG converter; complex pages may
   render differently from the original Notebook.
-
 """
 
 from __future__ import annotations
@@ -46,36 +47,27 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-import shutil  # used to locate external executables
+import shutil
 
 from pathlib import Path
 from typing import Iterable, List
 
 try:
-    # python-pptx is expected to be available in the environment.
     from pptx import Presentation
     from pptx.util import Inches
 except ImportError as exc:
     raise SystemExit("python-pptx is required to run this script") from exc
 
-
 _log = logging.getLogger(__name__)
-
 
 def convert_svg_to_png(svg_path: Path, png_path: Path) -> None:
     """Convert an SVG file to a PNG file.
 
     Attempts to use cairosvg first, then falls back to ImageMagick’s
     ``magick`` CLI.  Raises RuntimeError on failure.
-
-    Args:
-        svg_path: path to the input SVG file.
-        png_path: path where the output PNG should be written.
     """
-    # Try to use cairosvg if available.
     try:
         import cairosvg  # type: ignore
-
         cairosvg.svg2png(url=str(svg_path), write_to=str(png_path))
         return
     except ImportError:
@@ -83,7 +75,6 @@ def convert_svg_to_png(svg_path: Path, png_path: Path) -> None:
     except Exception as exc:
         _log.warning("cairosvg failed: %s", exc)
 
-    # Fall back to ImageMagick's magick command if present.
     magick_path = shutil.which("magick")
     if magick_path:
         try:
@@ -101,46 +92,25 @@ def convert_svg_to_png(svg_path: Path, png_path: Path) -> None:
         "Unable to convert SVG to PNG. Install cairosvg or ensure ImageMagick is configured."
     )
 
-
-def extract_svg_pages(zf: zipfile.ZipFile) -> List[str]:
-    """Return a list of SVG file names in the notebook archive.
-
-    The SMART Notebook format stores pages as SVG files with
-    names like ``page_N_.svg`` where N is an integer.  Other
-    documents may embed additional SVGs; this function filters
-    for files whose base name begins with "page" and ends with
-    ".svg".
-
-    Args:
-        zf: an opened ZipFile representing the .notebook archive.
-
-    Returns:
-        A list of SVG file paths inside the archive, sorted by page number.
-    """
-    candidates = []
+def extract_page_files(zf: zipfile.ZipFile) -> List[str]:
+    """Return a list of page asset file names in the notebook archive."""
+    candidates: List[str] = []
     for name in zf.namelist():
-        base = os.path.basename(name)
-        if base.lower().endswith('.svg') and base.lower().startswith('page'):
+        base = os.path.basename(name).lower()
+        if base.startswith('page') and (
+            base.endswith('.svg')
+            or base.endswith('.png')
+            or base.endswith('.jpg')
+            or base.endswith('.jpeg')
+        ):
             candidates.append(name)
-    # Sort by the numeric part of the file name (if present).
     def page_key(name: str) -> int:
-        # Extract digits from the file name for sorting.
         digits = ''.join(ch for ch in os.path.basename(name) if ch.isdigit())
         return int(digits) if digits else 0
-
     return sorted(candidates, key=page_key)
 
-
 def process_notebook(notebook_path: Path, output_dir: Path) -> Path:
-    """Convert a single .notebook file into a .pptx.
-
-    Args:
-        notebook_path: path to the input .notebook file.
-        output_dir: directory where the .pptx should be saved.
-
-    Returns:
-        Path to the generated .pptx file.
-    """
+    """Convert a single .notebook file into a .pptx."""
     if not notebook_path.exists():
         raise FileNotFoundError(notebook_path)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -148,42 +118,39 @@ def process_notebook(notebook_path: Path, output_dir: Path) -> Path:
     pptx_path = output_dir / f"{base_name}.pptx"
     _log.info("Processing %s", notebook_path)
     with zipfile.ZipFile(notebook_path) as zf:
-        page_svgs = extract_svg_pages(zf)
-        if not page_svgs:
-            _log.warning("No SVG pages found in %s; skipping", notebook_path)
+        page_files = extract_page_files(zf)
+        if not page_files:
+            _log.warning("No supported page assets found in %s; skipping", notebook_path)
             return pptx_path
         prs = Presentation()
-        blank_layout = prs.slide_layouts[6]  # blank slide
-        # Use a temporary directory to store intermediate PNGs.
+        blank_layout = prs.slide_layouts[6]
         with tempfile.TemporaryDirectory() as tmpdir_name:
             tmpdir = Path(tmpdir_name)
-            for idx, page_name in enumerate(page_svgs, start=1):
-                svg_filename = tmpdir / f"page_{idx}.svg"
-                png_filename = tmpdir / f"page_{idx}.png"
-                # Extract SVG from zip to temporary file.
-                with svg_filename.open('wb') as f_out:
+            for idx, page_name in enumerate(page_files, start=1):
+                suffix = Path(page_name).suffix.lower()
+                extracted_path = tmpdir / f"page_{idx}{suffix}"
+                with extracted_path.open('wb') as f_out:
                     f_out.write(zf.read(page_name))
-                try:
-                    convert_svg_to_png(svg_filename, png_filename)
-                except Exception as exc:
-                    _log.error("Failed to convert %s: %s", page_name, exc)
-                    continue
+                if suffix == '.svg':
+                    png_path = tmpdir / f"page_{idx}.png"
+                    try:
+                        convert_svg_to_png(extracted_path, png_path)
+                    except Exception as exc:
+                        _log.error("Failed to convert %s: %s", page_name, exc)
+                        continue
+                    image_path = png_path
+                else:
+                    image_path = extracted_path
                 slide = prs.slides.add_slide(blank_layout)
-                # Fit the image to the full slide.
                 slide.shapes.add_picture(
-                    str(png_filename), 0, 0, width=prs.slide_width, height=prs.slide_height
+                    str(image_path), 0, 0, width=prs.slide_width, height=prs.slide_height
                 )
             prs.save(pptx_path)
     _log.info("Saved PowerPoint to %s", pptx_path)
     return pptx_path
 
-
 def iter_notebook_files(input_path: Path) -> Iterable[Path]:
-    """Yield .notebook files from the given path.
-
-    If input_path is a file with the .notebook extension, yield it directly.
-    If it is a directory, recursively search for .notebook files.
-    """
+    """Yield .notebook files from the given path."""
     if input_path.is_file() and input_path.suffix.lower() == '.notebook':
         yield input_path
     elif input_path.is_dir():
@@ -191,7 +158,6 @@ def iter_notebook_files(input_path: Path) -> Iterable[Path]:
             yield path
     else:
         _log.warning("%s is neither a .notebook file nor a directory", input_path)
-
 
 def main(argv: List[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -219,7 +185,6 @@ def main(argv: List[str] | None = None) -> int:
         _log.error("No .notebook files found in %s", args.input)
         return 1
     return 0
-
 
 if __name__ == '__main__':
     raise SystemExit(main())
