@@ -1,16 +1,96 @@
-CairoSVG with Cairo: install a wheel that bundles Cairo. On Windows run pip install "cairosvg==2.5.2"; this package contains the necessary DLLs. On macOS run brew install cairo followed by pip install cairosvg. On Debian/Ubuntu run sudo apt-get install libcairo2 then pip install cairosvg.
+SMART Notebook to PowerPoint Converter
+This repository contains a Python script that converts SMART Notebook (.notebook) files into Microsoft PowerPoint (.pptx) presentations. Each Notebook file is a ZIP archive that holds individual page assets in SVG, PNG or JPEG formats. The script scans a directory tree for .notebook files, extracts all supported page assets, converts SVG pages to PNG if necessary, and assembles a static slide deck using python‑pptx. Interactive SMART features (animations, audio, video, embedded quizzes) are not exported.
 
-ImageMagick: install ImageMagick and confirm that magick is on your PATH and can convert SVG files. On Windows download the ImageMagick 7 installer (Q16 HDRI) from the official site, check “Install legacy utilities” and “Install development headers and libraries.” On macOS run brew install imagemagick; on Debian/Ubuntu run sudo apt-get install imagemagick. Test with magick input.svg output.png.
+Features
+Batch processing: provide a root directory and the script recursively converts every .notebook file it finds. Use --output-dir to send all results to a single directory; omit it to write each .pptx alongside its source file.
 
-The Python cairosvg module is installed, but the shared library libcairo is missing or cannot be located, so the import succeeds but every render attempt fails and logs those warnings. To eliminate them you must install the Cairo C library and make sure it’s discoverable:
+Asset handling: pages stored as SVG are rasterised to PNG; existing PNG/JPEG pages are used directly. Unsupported page formats (proprietary XML, interactive objects) are skipped.
 
-Windows: The standard pip install cairosvg relies on an external GTK/Cairo runtime. Either install GTK‑3 (which bundles the Cairo DLLs) and add its bin directory to your PATH, or install the wheel with built‑in dependencies, e.g. pip install "cairosvg==2.5.2". Confirm that libcairo-2.dll exists somewhere on your system and that its directory appears in your PATH.
+Fallback conversion: if SVG rasterisation fails (e.g. due to missing Cairo), the script attempts to call ImageMagick’s magick command instead.
 
-macOS (Homebrew): Run brew install cairo and brew install libffi. If you’re on Apple Silicon, Homebrew installs libraries under /opt/homebrew/lib; on Intel it’s /usr/local/lib. The loader looks in /usr/local/lib by default, so create a symlink or update your DYLD_LIBRARY_PATH, for example:
-ln -s /opt/homebrew/lib/libcairo.2.dylib /usr/local/lib/libcairo.2.dylib.
+Usage
+Install the Python dependencies (see below) and run:
 
-Linux (Debian/Ubuntu): Install Cairo and its development headers with sudo apt-get install libcairo2 libffi6. If you’re using a Python Slim image or a conda environment, set LD_LIBRARY_PATH to include /usr/lib or wherever libcairo.so.2 resides.
+bash
+Copy
+Edit
+python notebook_to_ppt.py --input <path> [--output-dir <output_directory>] [--verbose]
+<path> can be a single .notebook file or a directory; the script recurses through subdirectories.
 
-Fallback to ImageMagick: The script falls back to the magick command if CairoSVG fails. Make sure that ImageMagick is installed and that the magick executable is on your PATH. On Windows you should see a file named magick.exe in the install folder; add that folder to PATH. On macOS brew install imagemagick installs it in /usr/local/bin. Test with magick input.svg output.png at the command line; if it fails, your ImageMagick build lacks SVG support.
+If --output-dir is not supplied, each PowerPoint file is saved in the same folder as its source .notebook file.
 
-Once the Cairo library is available or the magick command is working, the warnings will disappear and the conversion will proceed correctly.
+Use --verbose for detailed logging.
+
+Dependencies
+The converter script depends on:
+
+Python 3 with the python‑pptx library (already included in this repo).
+
+CairoSVG to rasterise SVG pages. CairoSVG is a Python package that relies on the C‑level Cairo library and FFI headers. The CairoSVG documentation notes that additional tools are required during installation—specifically Cairo and FFI headers—and the package names vary by operating system
+cairosvg.org
+:
+
+Windows: install Cairo (for example via GTK) and the Microsoft Visual C++ compiler
+cairosvg.org
+. An easier option is to install the prebuilt wheel that bundles Cairo: pip install "cairosvg==2.5.2".
+
+macOS: use Homebrew to install cairo and libffi
+cairosvg.org
+, then run pip install cairosvg.
+
+Linux (Debian/Ubuntu): install the cairo, python3-dev and libffi-dev packages
+cairosvg.org
+, then run pip install cairosvg.
+
+On Windows you must also ensure that the libcairo-2.dll file is on your PATH. The cairocffi documentation notes that cairo must be available as a shared library and suggests using Alexander Shaduri’s GTK+ installer, which places libcairo-2.dll on your PATH
+doc.courtbouillon.org
+.
+
+ImageMagick (fallback). If CairoSVG cannot rasterise a page, the script falls back to ImageMagick’s magick command. You need a version of ImageMagick that supports SVG:
+
+Windows: the official site offers a self‑installing Q16 HDRI build (16 bits per component). According to ImageMagick’s download page, the Windows version is self‑installing—just click the appropriate file (e.g. ImageMagick‑7.x.x‑Q16‑HDRI‑x64‑dll.exe) and follow the prompts
+imagemagick.org
+.
+
+macOS: install via Homebrew using brew install imagemagick; this downloads prebuilt binaries and their delegate libraries
+imagemagick.org
+.
+
+Linux (Debian/Ubuntu): install via your package manager, e.g. sudo apt‑get install imagemagick.
+
+After installation, verify that the magick command is on your PATH and can convert an SVG: run magick input.svg output.png. If this fails, your ImageMagick build lacks SVG support.
+
+Troubleshooting Cairo errors
+CairoSVG relies on the C‑level Cairo graphics library. If you receive errors such as
+
+pgsql
+Copy
+Edit
+no library called "cairo-2" was found
+no library called "libcairo.so.2" was found
+no library called "libcairo-2.dll" was found
+it means the Cairo DLL or shared library cannot be located. To resolve this:
+
+Windows: ensure that libcairo-2.dll exists on your system and that its directory is included in the PATH. The cairocffi documentation recommends using Alexander Shaduri’s GTK+ installer and keeping the “set up PATH” checkbox checked
+doc.courtbouillon.org
+. Alternatively, install the CairoSVG wheel cairosvg==2.5.2, which bundles the necessary DLLs.
+
+macOS: install cairo and libffi via Homebrew (brew install cairo libffi). On Apple Silicon systems, Homebrew installs libraries under /opt/homebrew/lib; create a symlink from libcairo.2.dylib to /usr/local/lib or update your DYLD_LIBRARY_PATH accordingly. For example:
+
+bash
+Copy
+Edit
+ln -s /opt/homebrew/lib/libcairo.2.dylib /usr/local/lib/libcairo.2.dylib
+Linux: install the libcairo2, libcairo2-dev (or python3-dev, libffi-dev) packages via your package manager and ensure LD_LIBRARY_PATH includes the directory containing libcairo.so.2.
+
+Once the Cairo library can be located by your system loader, the warnings disappear and SVG pages will convert correctly.
+
+Repository contents
+notebook_to_ppt.py – the Python script that performs the conversion.
+
+ImageMagick‑7.x.x‑Q16‑HDRI‑x64‑dll.exe (Windows only) – the official ImageMagick installer from the project’s download page
+imagemagick.org
+. Run this executable to install ImageMagick with high dynamic‑range imaging support. During installation, ensure that the option to add ImageMagick to your system PATH is selected.
+
+License
+This converter script is provided for educational purposes without any warranty. SMART Notebook and its associated trademarks are owned by SMART Technologies ULC. Use at your own risk.
