@@ -2,9 +2,10 @@ import os
 import shutil
 import comtypes.client
 from pptx import Presentation
-from pptx.util import Inches
+from pptx.util import Inches, Pt
 from PIL import Image
 import pytesseract
+from pytesseract import Output
 from cairosvg import svg2png
 
 # Converts each slide of a PowerPoint file into individual PNG images.
@@ -25,28 +26,59 @@ def convert_svg_images(image_dir):
             svg2png(url=svg_path, write_to=png_path)
             os.remove(svg_path)
 
-# Performs OCR (Optical Character Recognition) on each image file and extracts text.
-def ocr_images(image_dir):
-    extracted_texts = []
+# Performs OCR (Optical Character Recognition) on each image file and extracts text along with layout positions.
+def ocr_images_with_layout(image_path):
     pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-    image_files = sorted([file for file in os.listdir(image_dir) if file.lower().endswith('.png')])
-    for img in image_files:
-        img_path = os.path.join(image_dir, img)
-        text = pytesseract.image_to_string(Image.open(img_path))
-        extracted_texts.append(text.strip())
-    return extracted_texts
+    img = Image.open(image_path)
+    data = pytesseract.image_to_data(img, output_type=Output.DICT)
 
-# Creates a new PowerPoint file with each OCR-extracted text as a slide.
-def create_text_ppt(texts, output_ppt):
-    prs = Presentation()
-    for text in texts:
-        slide = prs.slides.add_slide(prs.slide_layouts[5])
-        textbox = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(8), Inches(5))
+    blocks = []
+    current_block = []
+
+    n_boxes = len(data['level'])
+    for i in range(n_boxes):
+        if int(data['conf'][i]) > 60:  # Confidence threshold
+            (x, y, w, h, text) = (data['left'][i], data['top'][i], data['width'][i], data['height'][i], data['text'][i])
+            if text.strip():
+                current_block.append((x, y, w, h, text))
+    
+    blocks = cluster_text_blocks(current_block)
+    return blocks
+
+# Cluster text into separate blocks based on vertical spacing.
+def cluster_text_blocks(text_elements, spacing_threshold=20):
+    sorted_elements = sorted(text_elements, key=lambda el: el[1])
+    clusters = []
+    current_cluster = []
+    last_y = None
+
+    for element in sorted_elements:
+        _, y, _, h, _ = element
+        if last_y is not None and (y - (last_y + h)) > spacing_threshold:
+            if current_cluster:
+                clusters.append(current_cluster)
+                current_cluster = []
+        current_cluster.append(element)
+        last_y = y
+
+    if current_cluster:
+        clusters.append(current_cluster)
+
+    return clusters
+
+# Creates a new PowerPoint slide with OCR-extracted text placed based on original positions.
+def create_layout_slide(prs, clusters):
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
+    for cluster in clusters:
+        texts = ' '.join([el[4] for el in cluster])
+        x, y, _, _, _ = cluster[0]
+        textbox = slide.shapes.add_textbox(Inches(x / 96), Inches(y / 96), Inches(4), Inches(1))
         frame = textbox.text_frame
-        frame.text = text
-    prs.save(output_ppt)
+        p = frame.add_paragraph()
+        p.text = texts
+        p.font.size = Pt(12)
 
-# Main pipeline for OCR automation.
+# Main pipeline for OCR automation with layout preservation.
 def process_ppt_file(input_ppt):
     base_name = os.path.splitext(input_ppt)[0]
     temp_dir = base_name + "_temp_images"
@@ -59,9 +91,16 @@ def process_ppt_file(input_ppt):
 
     ppt_to_images(input_ppt, temp_dir)
     convert_svg_images(temp_dir)
-    texts = ocr_images(temp_dir)
-    create_text_ppt(texts, output_ppt)
 
+    prs = Presentation()
+
+    image_files = sorted([file for file in os.listdir(temp_dir) if file.lower().endswith('.png')])
+    for img_file in image_files:
+        img_path = os.path.join(temp_dir, img_file)
+        clusters = ocr_images_with_layout(img_path)
+        create_layout_slide(prs, clusters)
+
+    prs.save(output_ppt)
     shutil.rmtree(temp_dir)
 
 # Trawls directories recursively and processes all PPTX files.
