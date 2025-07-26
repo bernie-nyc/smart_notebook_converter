@@ -1,4 +1,8 @@
- The Python cairosvg module is installed, but the shared library libcairo is missing or cannot be located, so the import succeeds but every render attempt fails and logs those warnings. To eliminate them you must install the Cairo C library and make sure it’s discoverable:
+CairoSVG with Cairo: install a wheel that bundles Cairo. On Windows run pip install "cairosvg==2.5.2"; this package contains the necessary DLLs. On macOS run brew install cairo followed by pip install cairosvg. On Debian/Ubuntu run sudo apt-get install libcairo2 then pip install cairosvg.
+
+ImageMagick: install ImageMagick and confirm that magick is on your PATH and can convert SVG files. On Windows download the ImageMagick 7 installer (Q16 HDRI) from the official site, check “Install legacy utilities” and “Install development headers and libraries.” On macOS run brew install imagemagick; on Debian/Ubuntu run sudo apt-get install imagemagick. Test with magick input.svg output.png.
+
+The Python cairosvg module is installed, but the shared library libcairo is missing or cannot be located, so the import succeeds but every render attempt fails and logs those warnings. To eliminate them you must install the Cairo C library and make sure it’s discoverable:
 
 Windows: The standard pip install cairosvg relies on an external GTK/Cairo runtime. Either install GTK‑3 (which bundles the Cairo DLLs) and add its bin directory to your PATH, or install the wheel with built‑in dependencies, e.g. pip install "cairosvg==2.5.2". Confirm that libcairo-2.dll exists somewhere on your system and that its directory appears in your PATH.
 
